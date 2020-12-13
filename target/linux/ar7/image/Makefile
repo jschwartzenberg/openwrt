@@ -61,6 +61,7 @@ bs=131072 conv=sync
 endef
 
 define align/squashfs
+bs=65536 conv=sync
 endef
 
 define Image/Build/CyberTAN
