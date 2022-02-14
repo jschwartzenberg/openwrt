@@ -16,7 +16,7 @@
  #include "ifxmips_pcie.h"
  #include "ifxmips_pcie_reg.h"
  
-@@ -40,6 +47,10 @@
+@@ -40,6 +47,11 @@
  static DEFINE_SPINLOCK(ifx_pcie_lock);
  
  u32 g_pcie_debug_flag = PCIE_MSG_ANY & (~PCIE_MSG_CFG);
@@ -24,10 +24,11 @@
 +static struct phy *ltq_pcie_phy;
 +static struct reset_control *ltq_pcie_reset;
 +static struct regmap *ltq_rcu_regmap;
++static bool switch_pcie_endianess;
  
  static ifx_pcie_irq_t pcie_irqs[IFX_PCIE_CORE_NR] = {
      {
-@@ -82,6 +93,22 @@ void ifx_pcie_debug(const char *fmt, ...
+@@ -82,6 +94,22 @@ void ifx_pcie_debug(const char *fmt, ...
  	printk("%s", buf);
  }
  
@@ -50,7 +51,7 @@
  
  static inline int pcie_ltssm_enable(int pcie_port)
  {
-@@ -988,10 +1015,22 @@ int  ifx_pcie_bios_plat_dev_init(struct
+@@ -988,10 +1016,26 @@ int  ifx_pcie_bios_plat_dev_init(struct
  static int
  pcie_rc_initialize(int pcie_port)
  {
@@ -65,6 +66,10 @@
 +#ifdef CONFIG_IFX_PCIE_HW_SWAP
 +	regmap_update_bits(ltq_rcu_regmap, 0x4c, IFX_RCU_AHB_BE_PCIE_S,
 +			   IFX_RCU_AHB_BE_PCIE_S);
++       if (switch_pcie_endianess) {
++	        regmap_update_bits(ltq_rcu_regmap, 0x4c, IFX_RCU_AHB_BE_XBAR_S,
++			           IFX_RCU_AHB_BE_XBAR_S);
++       }
 +#else
 +	regmap_update_bits(ltq_rcu_regmap, 0x4c, IFX_RCU_AHB_BE_PCIE_S,
 +			   0x0);
@@ -75,7 +80,7 @@
  
  	pcie_ep_gpio_rst_init(pcie_port);
  
-@@ -1000,26 +1039,21 @@ pcie_rc_initialize(int pcie_port)
+@@ -1000,26 +1044,21 @@ pcie_rc_initialize(int pcie_port)
  	* reset PCIe PHY will solve this issue 
  	*/
  	for (i = 0; i < IFX_PCIE_PHY_LOOP_CNT; i++) {
@@ -112,7 +117,7 @@
  
  		/* Enable PCIe PHY and Clock */
  		pcie_core_pmu_setup(pcie_port);
-@@ -1035,6 +1069,10 @@ pcie_rc_initialize(int pcie_port)
+@@ -1035,6 +1074,10 @@ pcie_rc_initialize(int pcie_port)
  		/* Once link is up, break out */
  		if (pcie_app_loigc_setup(pcie_port) == 0)
  			break;
@@ -123,7 +128,7 @@
  	}
  	if (i >= IFX_PCIE_PHY_LOOP_CNT) {
  		printk(KERN_ERR "%s link up failed!!!!!\n", __func__);
-@@ -1045,17 +1083,67 @@ pcie_rc_initialize(int pcie_port)
+@@ -1045,17 +1088,74 @@ pcie_rc_initialize(int pcie_port)
  	return 0;
  }
  
@@ -176,6 +181,13 @@
 +        return PTR_ERR(ltq_pcie_reset);
 +    }
 +
++    if (of_property_read_bool(node, "lantiq,switch-pcie-endianess")) {
++        switch_pcie_endianess = true;
++        dev_info(&pdev->dev, "switch pcie endianess requested\n");
++    } else {
++        switch_pcie_endianess = false;
++    }
++
 +    ltq_rcu_regmap = syscon_regmap_lookup_by_phandle(node, "lantiq,rcu");
 +    if (IS_ERR(ltq_rcu_regmap))
 +        return PTR_ERR(ltq_rcu_regmap);
@@ -193,7 +205,7 @@
      for (pcie_port = startup_port; pcie_port < IFX_PCIE_CORE_NR; pcie_port++){
  	if (pcie_rc_initialize(pcie_port) == 0) {
  	    IFX_PCIE_PRINT(PCIE_MSG_INIT, "%s: ifx_pcie_cfg_base 0x%p\n", 
-@@ -1067,6 +1155,7 @@ static int __init ifx_pcie_bios_init(voi
+@@ -1067,6 +1167,7 @@ static int __init ifx_pcie_bios_init(voi
                  return -ENOMEM;
              }
              ifx_pcie_controller[pcie_port].pcic.io_map_base = (unsigned long)io_map_base;
@@ -201,7 +213,7 @@
  
              register_pci_controller(&ifx_pcie_controller[pcie_port].pcic);
              /* XXX, clear error status */
-@@ -1083,6 +1172,30 @@ static int __init ifx_pcie_bios_init(voi
+@@ -1083,6 +1184,30 @@ static int __init ifx_pcie_bios_init(voi
  
      return 0;
  }
@@ -243,7 +255,7 @@
  #define IFX_REG_R32    ltq_r32
  #define IFX_REG_W32    ltq_w32
  #define CONFIG_IFX_PCIE_HW_SWAP
-@@ -53,21 +51,6 @@
+@@ -54,21 +52,6 @@
  #define OUT			((volatile u32*)(IFX_GPIO + 0x0070))
  
  
@@ -265,7 +277,7 @@
  static inline void pcie_ahb_pmu_setup(void) 
  {
  	/* Enable AHB bus master/slave */
-@@ -79,24 +62,6 @@ static inline void pcie_ahb_pmu_setup(vo
+@@ -80,24 +63,6 @@ static inline void pcie_ahb_pmu_setup(vo
      //AHBS_PMU_SETUP(IFX_PMU_ENABLE);
  }
  
@@ -290,7 +302,7 @@
  static inline void pcie_phy_pmu_enable(int pcie_port)
  {
  	struct clk *clk;
-@@ -115,17 +80,6 @@ static inline void pcie_phy_pmu_disable(
+@@ -116,17 +81,6 @@ static inline void pcie_phy_pmu_disable(
  //    PCIE_PHY_PMU_SETUP(IFX_PMU_DISABLE);
  }
  
@@ -308,7 +320,7 @@
  static inline void pcie_pdi_pmu_enable(int pcie_port)
  {
      /* Enable PDI to access PCIe PHY register */
-@@ -135,65 +89,6 @@ static inline void pcie_pdi_pmu_enable(i
+@@ -136,65 +90,6 @@ static inline void pcie_pdi_pmu_enable(i
      //PDI_PMU_SETUP(IFX_PMU_ENABLE);
  }
  
