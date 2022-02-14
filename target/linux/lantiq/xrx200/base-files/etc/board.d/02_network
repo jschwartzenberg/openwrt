@@ -23,6 +23,10 @@ lantiq_setup_interfaces()
 	avm,fritz7490-micron)
 		ucidef_set_interface_lan "lan1 lan2 lan3 lan4 lan-wasp"
 		;;
+	avm,fritz5490|\
+	avm,fritz5490-micron)
+		ucidef_set_interfaces_lan_wan "lan1 lan2 lan-wasp" "wan"
+		;;
 	arcadyan,vgv7510kw22-brn|\
 	arcadyan,vgv7510kw22-nor|\
 	arcadyan,vgv7519-brn|\
@@ -120,6 +124,8 @@ lantiq_setup_macs()
 		wan_mac=$(macaddr_add "$(mtd_get_mac_binary urlader 0xa91)" 1)
 		;;
 	avm,fritz3390|\
+	avm,fritz5490|\
+	avm,fritz5490-micron|\
 	avm,fritz7362sl|\
 	avm,fritz7490|\
 	avm,fritz7490-micron)

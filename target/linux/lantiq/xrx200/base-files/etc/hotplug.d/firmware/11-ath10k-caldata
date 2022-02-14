@@ -9,7 +9,7 @@ case "$FIRMWARE" in
 "ath10k/cal-pci-0000:02:00.0.bin")
 	board=$(board_name)
 	case $board in
-		avm,fritz7490|avm,fritz7490-micron)
+		avm,fritz5490|avm,fritz5490-micron|avm,fritz7490|avm,fritz7490-micron)
 			[ ! -d /lib/firmware/ath10k ] && mkdir /lib/firmware/ath10k
 			offset=$(hexdump -v -e '1/1 "%02x"' $(find_mtd_chardev "urlader") | awk '{print index($0, "4408")}')
 			let "offset = ($offset - 1) / 2"
