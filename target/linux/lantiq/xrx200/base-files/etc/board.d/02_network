@@ -18,6 +18,9 @@ lantiq_setup_interfaces()
 	arcadyan,arv7519rw22)
 		ucidef_set_interface_lan "lan1 lan2 lan3 lan4 lan5"
 		;;
+	avm,fritz3390)
+		ucidef_set_interface_lan "lan1 lan2 lan3 lan4 lan-wasp"
+		;;
 	arcadyan,vgv7510kw22-brn|\
 	arcadyan,vgv7510kw22-nor|\
 	arcadyan,vgv7519-brn|\
@@ -31,7 +34,6 @@ lantiq_setup_interfaces()
 		;;
 	avm,fritz3370-rev2-hynix|\
 	avm,fritz3370-rev2-micron|\
-	avm,fritz3390|\
 	avm,fritz7360sl|\
 	avm,fritz7360-v2|\
 	avm,fritz7362sl|\

@@ -142,8 +142,8 @@ define Device/avm_fritz3390
   DEVICE_MODEL := FRITZ!Box 3390
   KERNEL_SIZE := 4096k
   IMAGE_SIZE := 49152k
-  DEVICE_PACKAGES := kmod-ath9k kmod-owl-loader wpad-basic-mbedtls \
-	kmod-usb-dwc2 fritz-tffs
+  DEVICE_PACKAGES := kmod-ath9k kmod-avm-wasp kmod-owl-loader \
+	wpad-basic-mbedtls kmod-usb-dwc2 fritz-tffs
 endef
 TARGET_DEVICES += avm_fritz3390
 

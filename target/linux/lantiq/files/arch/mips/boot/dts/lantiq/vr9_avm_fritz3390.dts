@@ -104,6 +104,14 @@
 		gpio = <&gpio 5 GPIO_ACTIVE_HIGH>;
 		enable-active-high;
 	};
+
+	remoteproc-wasp {
+		compatible = "avm,fritzbox3390-wasp";
+		mdio-device = <&gswip_mdio>;
+		link-interface = <&port5>;
+		reset-gpios = <&gpio 34 GPIO_ACTIVE_HIGH>;
+		power-gpios = <&gpio 7 GPIO_ACTIVE_HIGH>;
+	};
 };
 
 &gphy0 {
@@ -193,6 +201,17 @@
 		label = "lan1";
 		phy-mode = "internal";
 		phy-handle = <&phy13>;
+	};
+
+	port5: port@5 {
+		reg = <5>;
+		label = "lan-wasp";
+		phy-mode = "rgmii";
+
+		fixed-link {
+			speed = <1000>;
+			full-duplex;
+		};
 	};
 };
 
