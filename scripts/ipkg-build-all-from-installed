@@ -1,0 +1,10 @@
+#!/bin/bash
+
+root_dir=$1
+destination=$2
+
+for package in ${root_dir}/usr/lib/opkg/info/*.list
+do
+  echo ${package}
+  ./ipkg-build-from-installed ${package::-5} ${destination}
+done

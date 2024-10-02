@@ -1,0 +1,43 @@
+#!/bin/sh
+
+# Create directory from installed package and build it
+
+set -e
+usage="Usage: $0 [-v] [-h] [-m] <pkg_path> [<destination_directory>]"
+case $# in
+1)
+	dest_dir=$PWD
+	;;
+2)
+	dest_dir=$2
+	if [ "$dest_dir" = "." ] || [ "$dest_dir" = "./" ] ; then
+	    dest_dir=$PWD
+	fi
+	;;
+*)
+	echo "$usage" >&2
+	exit 1
+	;;
+esac
+
+tmp_dir=${dest_dir}/$(basename ${0}).$$
+
+# This will be usr/lib/opkg/info/package[,.list,.control]
+input_file="$(realpath "${1}")"
+root_dir=$(dirname ${input_file})/../../../..
+
+mkdir -p ${tmp_dir}/CONTROL
+cp ${input_file}.control ${tmp_dir}/CONTROL/control
+
+prev_dir=${PWD}
+cd ${root_dir}
+while read line
+do
+  echo ${line}
+  echo ${tmp_dir}
+  cp -a --parents .${line} ${tmp_dir}/
+done < ${input_file}.list
+cd ${prev_dir}
+
+./ipkg-build ${tmp_dir} ${dest_dir}
+rm -r ${tmp_dir}
