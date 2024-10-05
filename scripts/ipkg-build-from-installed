@@ -1,5 +1,4 @@
 #!/bin/sh
-
 # Create directory from installed package and build it
 
 NEW_LOADER="/lib/ld-musl-armhf.so.1"
@@ -23,7 +22,6 @@ patch_file()
   fi
 }
 
-set -e
 usage="Usage: $0 [-v] [-h] [-m] <pkg_path> [<destination_directory>]"
 case $# in
 1)
@@ -61,5 +59,12 @@ do
 done < ${input_file}.list
 cd ${prev_dir}
 
-./ipkg-build ${tmp_dir} ${dest_dir}
+prev_dir=${PWD}
+cd ${dest_dir}
+${prev_dir}/ipkg-build ${tmp_dir}
+if [ $? -ne 0 ]
+then
+  exit 1
+fi
+cd ${prev_dir}
 rm -r ${tmp_dir}
