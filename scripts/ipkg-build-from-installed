@@ -10,15 +10,15 @@ patch_file()
   if [ $? -eq 0 ]
   then
     echo "Found loader ${found_loader}"
-  fi
-  if [ ${found_loader} = "/lib/ld-musl-arm.so.1" ]
-  then
-    echo "Patching loader to point to $NEW_LOADER"
-    patchelf --set-interpreter "$NEW_LOADER" "${file_to_patch}"
-    if [ $? -eq 0 ]
+    if [ ${found_loader} = "/lib/ld-musl-arm.so.1" ]
     then
-      echo "Successfully patched ${file_to_patch}!"
-	fi
+      echo "Patching loader to point to $NEW_LOADER"
+      patchelf --set-interpreter "$NEW_LOADER" "${file_to_patch}"
+      if [ $? -eq 0 ]
+      then
+        echo "Successfully patched ${file_to_patch}!"
+      fi
+    fi
   fi
 }
 
@@ -45,15 +45,29 @@ tmp_dir=${dest_dir}/$(basename ${0}).$$
 input_file="$(realpath "${1}")"
 root_dir=$(dirname ${input_file})/../../../..
 
+package_name=$(basename ${input_file})
+config_result=$(grep "CONFIG_PACKAGE_${package_name}" ../.config)
+if [ $? -eq 0 ]
+then
+  case "${config_result}" in
+    *"is not set"*)
+      echo "Please use the OpenWRT package"
+      echo "Enable ${package_name} in 'make menuconfig'"
+    ;;
+  esac
+  exit 0
+fi
 mkdir -p ${tmp_dir}/CONTROL
 cp ${input_file}.control ${tmp_dir}/CONTROL/control
+if [ -e ${input_file}.conffiles ]
+then
+  cp ${input_file}.conffiles ${tmp_dir}/CONTROL/conffiles
+fi
 
 prev_dir=${PWD}
 cd ${root_dir}
 while read line
 do
-  echo ${line}
-  echo ${tmp_dir}
   cp -a --parents .${line} ${tmp_dir}/
   patch_file ${tmp_dir}/.${line}
 done < ${input_file}.list
