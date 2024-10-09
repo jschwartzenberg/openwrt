@@ -1,6 +1,7 @@
-#!/bin/sh
+#!/bin/bash
 # Create directory from installed package and build it
 
+#arm_cortex-a7_neon-vfpv4
 NEW_LOADER="/lib/ld-musl-armhf.so.1"
 
 patch_file()
@@ -19,6 +20,24 @@ patch_file()
         echo "Successfully patched ${file_to_patch}!"
       fi
     fi
+  fi
+  found_libs=$(patchelf --print-needed "${file_to_patch}" 2> /dev/null)
+  if [ $? -eq 0 ]
+  then
+    case "${found_libs}" in
+      *"libubox.so"*)
+        patchelf --replace-needed libubox.so libubox.so.20240329 "${file_to_patch}"
+        echo "Successfully patched lib reference ${file_to_patch}!"
+      ;;&
+      *"libubus.so"*)
+        patchelf --replace-needed libubus.so libubus.so.20231128 "${file_to_patch}"
+        echo "Successfully patched lib reference ${file_to_patch}!"
+      ;;&
+      *"libblobmsg_json.so"*)
+        patchelf --replace-needed libblobmsg_json.so libblobmsg_json.so.20240329 "${file_to_patch}"
+        echo "Successfully patched lib reference ${file_to_patch}!"
+      ;;&
+    esac
   fi
 }
 
@@ -59,6 +78,7 @@ then
 fi
 mkdir -p ${tmp_dir}/CONTROL
 cp ${input_file}.control ${tmp_dir}/CONTROL/control
+sed -i 's/Architecture: ipq/Architecture: arm_cortex-a7_neon-vfpv4/' ${tmp_dir}/CONTROL/control
 if [ -e ${input_file}.conffiles ]
 then
   cp ${input_file}.conffiles ${tmp_dir}/CONTROL/conffiles
