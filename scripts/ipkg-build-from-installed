@@ -39,6 +39,22 @@ patch_file()
       ;;&
     esac
   fi
+
+  if grep --binary-files=without-match dlan2-2400-ac "${file_to_patch}" 2> /dev/null
+  then
+    sed -i 's/dlan2-2400-ac/devolo,magic-2-wifi-next/g' "${file_to_patch}"
+    echo "Successfully patched model reference ${file_to_patch}!"
+  fi
+  if grep --binary-files=without-match '/sys/class/gpio/gpio63' "${file_to_patch}" 2> /dev/null
+  then
+    sed -i 's|/sys/class/gpio/gpio63|/sys/class/gpio/plc-enable|g' "${file_to_patch}" 2> /dev/null
+    echo "Successfully patched gpio reference ${file_to_patch}!"
+  fi
+  if grep --binary-files=without-match 'ssdk_set_set_advertise 4' "${file_to_patch}" 2> /dev/null
+  then
+    sed -i 's/ssdk_set_set_advertise 4/ethtool -s ghn speed/g' "${file_to_patch}" 2> /dev/null
+    echo "Successfully patched ssdk_set_set_advertise to ethtool ${file_to_patch}!"
+  fi
 }
 
 usage="Usage: $0 [-v] [-h] [-m] <pkg_path> [<destination_directory>]"
