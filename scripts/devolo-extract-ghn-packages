@@ -1,6 +1,12 @@
 #!/bin/bash
 
-for tool in binwalk patchelf sed
+# devolo-extract-ghn-packages -- obtains the packages needed for G.hn support on supported Devolo devices
+# Julius Schwartzenberg <julius.schwartzenberg@gmail.com>
+# this script relies on ipkg-build
+
+script_dir=$(realpath $(dirname ${0}))
+
+for tool in binwalk patchelf sed "${script_dir}/ipkg-build"
 do
   if ! command -v ${tool} > /dev/null
   then
@@ -9,24 +15,112 @@ do
   fi
 done
 
-if [ $# -ne 2 ]
+if [ $# -lt 2 ]
 then
+  echo "This script will extract and transform the packages needed for G.hn support on Devolo devices." >&2
+  echo "Currently supported are:" >&2  
+  echo "devolo Magic 2 WiFi 2-1" >&2
+  echo "devolo Magic 2 WiFi next" >&2
+  echo >&2
   echo "Usage:   ${0} <devolo_firmware> <destination_directory>" >&2
   echo "Example: ${0} delos_magic-2-wifi-next_6.0.1_2023-09-06.bin ghn-packages" >&2
+  echo "Additionally you may point the script to an OpenWRT image file to adapt the packages to." >&2
+  echo "Otherwise the script will look into the OpenWRT build directory." >&2
   exit 1
 fi
 
-firmware=$(realpath ${1})
-dest_dir=$(realpath ${2})
-script_dir=$(realpath $(dirname ${0}))
+for arg in "$@"
+do
+  case "${arg}" in
+    *delos*)
+      firmware=$(realpath ${arg})
+      if [ ! -e "${firmware}" ]
+      then
+        echo "${arg} does not exist!" >&2
+        exit 1
+      fi
+      ;;
+    *openwrt*)
+      openwrt_firmware=$(realpath ${arg})
+      if [ ! -e "${openwrt_firmware}" ]
+      then
+        echo "${arg} does not exist!" >&2
+        exit 1
+      fi
+      ;;
+    *)
+      if [ "${dest_dir}" ]
+      then
+        echo "Invalid arguments!" >&2
+        exit 1
+      fi
+      dest_dir=$(realpath ${arg})
+      if [ $? -ne 0 ]
+      then
+        echo "Invalid destination: ${arg}" >&2
+        exit 1
+      fi
+  esac
+done
 
-NEW_LOADER="/lib/ld-musl-armhf.so.1"
-LIBUBOX=$(basename $(find ${script_dir}/../build_dir/target-arm_cortex-a7+neon-vfpv4_musl_eabi/ -name 'libubox.so.*' -print -quit))
-LIBUBUS=$(basename $(find ${script_dir}/../build_dir/target-arm_cortex-a7+neon-vfpv4_musl_eabi/ -name 'libubus.so.*' -print -quit))
-LIBBLOBMSG_JSON=$(basename $(find ${script_dir}/../build_dir/target-arm_cortex-a7+neon-vfpv4_musl_eabi/ -name 'libblobmsg_json.so.*' -print -quit))
+if [ ! "${dest_dir}" ]
+then
+  echo "You need to specify a destination directory!" >&2
+  exit 1
+fi
+
+tmp_dir="${dest_dir}/$(basename ${0}).${$}"
+tmp_root="${tmp_dir}/root"
+tmp_openwrt_root="${tmp_dir}/openwrt-root"
+
+if [ "${openwrt_firmware}" ]
+then
+  mkdir -p "${tmp_openwrt_root}"
+  pushd "${tmp_openwrt_root}"
+  binwalk --extract "${openwrt_firmware}"
+  openwrt_search_dir=$(realpath ${tmp_openwrt_root}/*/squashfs-root)
+else
+  openwrt_search_dir=$(realpath ${script_dir}/../build_dir/target-arm_cortex-a7+neon-vfpv4_musl_eabi/)
+fi
+LIBUBOX=$(basename $(find "${openwrt_search_dir}" -name 'libubox.so.*' -print -quit))
+LIBUBUS=$(basename $(find "${openwrt_search_dir}" -name 'libubus.so.*' -print -quit))
+LIBBLOBMSG_JSON=$(basename $(find "${openwrt_search_dir}" -name 'libblobmsg_json.so.*' -print -quit))
+
+declare -i error=0
+
+if [ ! "${LIBUBOX}" ]
+then
+  echo "No libubox.so.* found below ${openwrt_search_dir}" >&2
+  echo "OpenWRT must be built with libubox enabled!" >&2
+  error=1
+fi
+if [ ! "${LIBUBUS}" ]
+then
+  echo "No libubus.so.* found below ${openwrt_search_dir}" >&2
+  echo "OpenWRT must be built with libubus enabled!" >&2
+  error=1
+fi
+if [ ! "${LIBBLOBMSG_JSON}" ]
+then
+  echo "No libblobmsg_json.so.* found below ${openwrt_search_dir}" >&2
+  echo "OpenWRT must be built with libblobmsg-json enabled!" >&2
+  error=1
+fi
+
+if [ ${error} -ne 0 ]
+then
+  exit 1
+fi
+unset error
+
+if [ "${tmp_openwrt_root}" -a -d "${tmp_openwrt_root}" ]
+then
+  rm -rf "${tmp_openwrt_root}"
+fi
 
 patch_file()
 {
+  NEW_ARM_LOADER="/lib/ld-musl-armhf.so.1"
   file_to_patch=${1}
   found_loader=$(patchelf --print-interpreter "${file_to_patch}" 2> /dev/null)
   if [ $? -eq 0 ]
@@ -34,8 +128,8 @@ patch_file()
     echo "Found loader ${found_loader}"
     if [ ${found_loader} = "/lib/ld-musl-arm.so.1" ]
     then
-      echo "Patching loader to point to $NEW_LOADER"
-      patchelf --set-interpreter "$NEW_LOADER" "${file_to_patch}"
+      echo "Patching loader to point to ${NEW_ARM_LOADER}"
+      patchelf --set-interpreter "${NEW_ARM_LOADER}" "${file_to_patch}"
       if [ $? -eq 0 ]
       then
         echo "Successfully patched loader in $(basename ${file_to_patch})!"
@@ -61,10 +155,25 @@ patch_file()
     esac
   fi
 
-  if grep --binary-files=without-match dlan2-2400-ac "${file_to_patch}" 2> /dev/null
+  if grep --binary-files=without-match 'dlan-pro-1200-ac' "${file_to_patch}" 2> /dev/null
+  then
+    sed -i 's/dlan-pro-1200-ac/devolo,magic-2-wifi/g' "${file_to_patch}"
+    echo "Successfully patched model reference $(basename ${file_to_patch})!"
+  fi
+  if grep --binary-files=without-match 'dlan-pro-1200*' "${file_to_patch}" 2> /dev/null
+  then
+    sed -i 's/dlan-pro-1200*/devolo,magic-2-wifi/g' "${file_to_patch}"
+    echo "Successfully patched model reference $(basename ${file_to_patch})!"
+  fi
+  if grep --binary-files=without-match 'dlan2-2400-ac' "${file_to_patch}" 2> /dev/null
   then
     sed -i 's/dlan2-2400-ac/devolo,magic-2-wifi-next/g' "${file_to_patch}"
     echo "Successfully patched model reference $(basename ${file_to_patch})!"
+  fi
+  if grep --binary-files=without-match '/sys/class/gpio/gpio13' "${file_to_patch}" 2> /dev/null
+  then
+    sed -i 's|/sys/class/gpio/gpio63|/sys/class/gpio/plc-enable|g' "${file_to_patch}" 2> /dev/null
+    echo "Successfully patched gpio reference $(basename ${file_to_patch})!"
   fi
   if grep --binary-files=without-match '/sys/class/gpio/gpio63' "${file_to_patch}" 2> /dev/null
   then
@@ -107,6 +216,7 @@ build_package_for_opkg_data()
   mkdir -p ${tmp_package}/CONTROL
   cp ${input_file}.control ${tmp_package}/CONTROL/control
   sed -i 's/Architecture: ipq/Architecture: arm_cortex-a7_neon-vfpv4/' ${tmp_package}/CONTROL/control
+  sed -i 's/Architecture: ar71xx/Architecture: mips_24kc/' ${tmp_package}/CONTROL/control
   if [ -e ${input_file}.conffiles ]
   then
     cp ${input_file}.conffiles ${tmp_package}/CONTROL/conffiles
@@ -128,17 +238,14 @@ build_package_for_opkg_data()
   rm -r ${tmp_package}
 }
 
-tmp_dir="${dest_dir}/$(basename ${0}).${$}"
-tmp_root="${tmp_dir}/root"
 mkdir -p "${tmp_root}"
 pushd "${tmp_dir}"
 binwalk --extract "${firmware}"
 root_dir=$(realpath ${tmp_dir}/*/squashfs-root)
 
-for package in ${root_dir}/usr/lib/opkg/info/{delos-base-files,delos-device-name,devolo-shared-configlayer,dlan2-fw-flashless-2400-ac,dlan2-tools,ghn-flashless,ghn-host,libssp,posix-timezone-db}.list
+for package in ${root_dir}/usr/lib/opkg/info/{delos-base-files,delos-device-name,devolo-shared-configlayer,dlan2-fw-flashless-*,dlan2-tools,ghn-flashless,ghn-host,libssp,posix-timezone-db}.list
 do
   build_package_for_opkg_data ${package::-5} "${dest_dir}"
 done
 
-popd
 rm -rf "${tmp_dir}"
