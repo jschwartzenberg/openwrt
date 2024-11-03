@@ -1042,7 +1042,7 @@ define Device/devolo_magic-2-wifi
   SOC := ar9344
   DEVICE_VENDOR := devolo
   DEVICE_MODEL := Magic 2 WiFi
-  DEVICE_PACKAGES := kmod-ath10k-ct ath10k-firmware-qca988x-ct
+  DEVICE_PACKAGES := kmod-ath10k-ct ath10k-firmware-qca988x-ct flock libcap ebtables-nft
   IMAGE_SIZE := 15872k
 endef
 TARGET_DEVICES += devolo_magic-2-wifi
