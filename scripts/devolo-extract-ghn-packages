@@ -189,13 +189,18 @@ patch_file()
   fi
   if grep --binary-files=without-match '/sys/class/gpio/gpio13' "${file_to_patch}" 2> /dev/null
   then
-    sed -i 's|/sys/class/gpio/gpio13|/sys/class/gpio/gpio525/value|g' "${file_to_patch}" 2> /dev/null
+    sed -i 's|/sys/class/gpio/gpio13|/sys/class/gpio/gpio525|g' "${file_to_patch}" 2> /dev/null
     echo "Successfully patched gpio reference $(basename ${file_to_patch})!"
   fi
   if grep --binary-files=without-match '/sys/class/gpio/gpio63' "${file_to_patch}" 2> /dev/null
   then
     sed -i 's|/sys/class/gpio/gpio63|/sys/class/gpio/plc-enable|g' "${file_to_patch}" 2> /dev/null
     echo "Successfully patched gpio reference $(basename ${file_to_patch})!"
+  fi
+  if grep --binary-files=without-match 'swconfig dev switch0 port 2 set max_aneg_speed' "${file_to_patch}" 2> /dev/null
+  then
+    sed -i 's/swconfig dev switch0 port 2 set max_aneg_speed/ethtool -s eth0 speed/g' "${file_to_patch}" 2> /dev/null
+    echo "Successfully patched swconfig to ethtool $(basename ${file_to_patch})!"
   fi
   if grep --binary-files=without-match 'ssdk_set_set_advertise 4' "${file_to_patch}" 2> /dev/null
   then
