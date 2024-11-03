@@ -80,7 +80,24 @@ then
   binwalk --extract "${openwrt_firmware}"
   openwrt_search_dir=$(realpath ${tmp_openwrt_root}/*/squashfs-root)
 else
-  openwrt_search_dir=$(realpath ${script_dir}/../build_dir/target-arm_cortex-a7+neon-vfpv4_musl_eabi/)
+  BUILD_CONFIG=$(realpath ${script_dir}/../.config)
+  if [ -e "${BUILD_CONFIG}" ]
+  then
+    regex="CONFIG_TARGET_ARCH_PACKAGES=\"([0-9a-z_]+)\""
+    while read line
+    do
+      if [[ $line =~ ${regex} ]]
+      then
+        ARCH="${BASH_REMATCH[1]}"
+      fi
+    done < "${BUILD_CONFIG}"
+    openwrt_search_dir=$(realpath ${script_dir}/../build_dir/target-${ARCH}*/)
+    echo "You did not specify an OpenWRT image, so looking for libraries in: ${openwrt_search_dir}"
+  else
+    echo "File ${BUILD_CONFIG} does not exist!" 2>&1
+    echo "Please provide a path to an OpenWRT image that the script can use the derive the correct library names!" 2>&1
+    exit 1
+  fi
 fi
 LIBUBOX=$(basename $(find "${openwrt_search_dir}" -name 'libubox.so.*' -print -quit))
 LIBUBUS=$(basename $(find "${openwrt_search_dir}" -name 'libubus.so.*' -print -quit))
@@ -172,7 +189,7 @@ patch_file()
   fi
   if grep --binary-files=without-match '/sys/class/gpio/gpio13' "${file_to_patch}" 2> /dev/null
   then
-    sed -i 's|/sys/class/gpio/gpio63|/sys/class/gpio/plc-enable|g' "${file_to_patch}" 2> /dev/null
+    sed -i 's|/sys/class/gpio/gpio13|/sys/class/gpio/gpio525/value|g' "${file_to_patch}" 2> /dev/null
     echo "Successfully patched gpio reference $(basename ${file_to_patch})!"
   fi
   if grep --binary-files=without-match '/sys/class/gpio/gpio63' "${file_to_patch}" 2> /dev/null
