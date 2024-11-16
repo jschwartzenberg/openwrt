@@ -6,7 +6,7 @@
 
 script_dir=$(realpath $(dirname ${0}))
 
-for tool in binwalk patchelf sed "${script_dir}/ipkg-build"
+for tool in binwalk grep readelf patchelf sed "${script_dir}/ipkg-build"
 do
   if ! command -v ${tool} > /dev/null
   then
@@ -103,115 +103,134 @@ LIBUBOX=$(basename $(find "${openwrt_search_dir}" -name 'libubox.so.*' -print -q
 LIBUBUS=$(basename $(find "${openwrt_search_dir}" -name 'libubus.so.*' -print -quit))
 LIBBLOBMSG_JSON=$(basename $(find "${openwrt_search_dir}" -name 'libblobmsg_json.so.*' -print -quit))
 
-declare -i error=0
+declare -i no_openwrt_files=0
 
 if [ ! "${LIBUBOX}" ]
 then
   echo "No libubox.so.* found below ${openwrt_search_dir}" >&2
-  echo "OpenWRT must be built with libubox enabled!" >&2
-  error=1
+  no_openwrt_files=1
 fi
 if [ ! "${LIBUBUS}" ]
 then
   echo "No libubus.so.* found below ${openwrt_search_dir}" >&2
-  echo "OpenWRT must be built with libubus enabled!" >&2
-  error=1
+  no_openwrt_files=1
 fi
 if [ ! "${LIBBLOBMSG_JSON}" ]
 then
   echo "No libblobmsg_json.so.* found below ${openwrt_search_dir}" >&2
-  echo "OpenWRT must be built with libblobmsg-json enabled!" >&2
-  error=1
+  no_openwrt_files=1
 fi
-
-if [ ${error} -ne 0 ]
-then
-  exit 1
-fi
-unset error
 
 if [ "${tmp_openwrt_root}" -a -d "${tmp_openwrt_root}" ]
 then
   rm -rf "${tmp_openwrt_root}"
 fi
 
+declare -A uClibc_files
+
 patch_file()
 {
-  NEW_ARM_LOADER="/lib/ld-musl-armhf.so.1"
   file_to_patch=${1}
-  found_loader=$(patchelf --print-interpreter "${file_to_patch}" 2> /dev/null)
-  if [ $? -eq 0 ]
-  then
-    echo "Found loader ${found_loader}"
-    if [ ${found_loader} = "/lib/ld-musl-arm.so.1" ]
-    then
-      echo "Patching loader to point to ${NEW_ARM_LOADER}"
-      patchelf --set-interpreter "${NEW_ARM_LOADER}" "${file_to_patch}"
+
+  file_info=$(file "${file_to_patch}")
+  case "${file_info}" in
+    */lib/ld-uClibc.so.0*)
+      for library in $(readelf -d "${file_to_patch}" | grep -Eo '[A-Za-z\.0-9_-]+\.so+[A-Za-z\.0-9_-]*')
+      do
+        uClibc_files[${library}]=
+      done
+
+      mv "${file_to_patch}" "${file_to_patch}.real"
+      echo "#!/bin/sh" > "${file_to_patch}"
+      echo "export LD_LIBRARY_PATH=/lib-uClibc" >> "${file_to_patch}"
+      echo "/lib-uClibc/ld-uClibc.so.0 $(basename ${file_to_patch}).real \"\$@\"" >> "${file_to_patch}"
+      chmod +x "${file_to_patch}"
+    ;;
+    */lib/ld-musl-arm.so.1*)
+      NEW_ARM_LOADER="/lib/ld-musl-armhf.so.1"
+      found_loader=$(patchelf --print-interpreter "${file_to_patch}" 2> /dev/null)
       if [ $? -eq 0 ]
       then
-        echo "Successfully patched loader in $(basename ${file_to_patch})!"
+        echo "Found loader ${found_loader}"
+        if [ ${found_loader} = "/lib/ld-musl-arm.so.1" ]
+        then
+          echo "Patching loader to point to ${NEW_ARM_LOADER}"
+          patchelf --set-interpreter "${NEW_ARM_LOADER}" "${file_to_patch}"
+          if [ $? -eq 0 ]
+          then
+            echo "Successfully patched loader in $(basename ${file_to_patch})!"
+          fi
+        fi
       fi
-    fi
-  fi
-  found_libs=$(patchelf --print-needed "${file_to_patch}" 2> /dev/null)
-  if [ $? -eq 0 ]
-  then
-    case "${found_libs}" in
-      *"libubox.so"*)
-        patchelf --replace-needed libubox.so "${LIBUBOX}" "${file_to_patch}"
-        echo "Successfully replaced library reference to "${LIBUBOX}" in $(basename ${file_to_patch})!"
-      ;;&
-      *"libubus.so"*)
-        patchelf --replace-needed libubus.so "${LIBUBUS}" "${file_to_patch}"
-        echo "Successfully replaced library reference to "${LIBUBUS}" in $(basename ${file_to_patch})!"
-      ;;&
-      *"libblobmsg_json.so"*)
-        patchelf --replace-needed libblobmsg_json.so "${LIBBLOBMSG_JSON}" "${file_to_patch}"
-        echo "Successfully replaced library reference to "${LIBBLOBMSG_JSON}" in $(basename ${file_to_patch})!"
-      ;;&
-    esac
-  fi
+      found_libs=$(patchelf --print-needed "${file_to_patch}" 2> /dev/null)
+      if [ $? -eq 0 ]
+      then
+        if [ ${no_openwrt_files} -ne 0 ]
+        then
+          echo "OpenWRT must be built with libubox, libubus, libblobmsg-json enabled!" >&2
+          echo "Please rebuilt OpenWRT or specify the correct image!" >&2
+          exit 1
+        fi
+        case "${found_libs}" in
+          *"libubox.so"*)
+            patchelf --replace-needed libubox.so "${LIBUBOX}" "${file_to_patch}"
+            echo "Successfully replaced library reference to "${LIBUBOX}" in $(basename ${file_to_patch})!"
+          ;;&
+          *"libubus.so"*)
+            patchelf --replace-needed libubus.so "${LIBUBUS}" "${file_to_patch}"
+            echo "Successfully replaced library reference to "${LIBUBUS}" in $(basename ${file_to_patch})!"
+          ;;&
+          *"libblobmsg_json.so"*)
+            patchelf --replace-needed libblobmsg_json.so "${LIBBLOBMSG_JSON}" "${file_to_patch}"
+            echo "Successfully replaced library reference to "${LIBBLOBMSG_JSON}" in $(basename ${file_to_patch})!"
+          ;;&
+        esac
+      fi
+    ;;
+    *text*)
+      if grep --binary-files=without-match 'dlan-pro-1200-ac' "${file_to_patch}" 2> /dev/null
+      then
+        sed -i 's/dlan-pro-1200-ac/devolo,magic-2-wifi/g' "${file_to_patch}"
+        echo "Successfully patched model reference $(basename ${file_to_patch})!"
+      fi
+      if grep --binary-files=without-match 'dlan-pro-1200*' "${file_to_patch}" 2> /dev/null
+      then
+        sed -i 's/dlan-pro-1200*/devolo,magic-2-wifi/g' "${file_to_patch}"
+        echo "Successfully patched model reference $(basename ${file_to_patch})!"
+      fi
+      if grep --binary-files=without-match 'dlan2-2400-ac' "${file_to_patch}" 2> /dev/null
+      then
+        sed -i 's/dlan2-2400-ac/devolo,magic-2-wifi-next/g' "${file_to_patch}"
+        echo "Successfully patched model reference $(basename ${file_to_patch})!"
+      fi
+      if grep --binary-files=without-match '/sys/class/gpio/gpio13' "${file_to_patch}" 2> /dev/null
+      then
+        sed -i 's|/sys/class/gpio/gpio13|/sys/class/gpio/gpio525|g' "${file_to_patch}" 2> /dev/null
+        echo "Successfully patched gpio reference $(basename ${file_to_patch})!"
+      fi
+      if grep --binary-files=without-match '/sys/class/gpio/gpio63' "${file_to_patch}" 2> /dev/null
+      then
+        sed -i 's|/sys/class/gpio/gpio63|/sys/class/gpio/plc-enable|g' "${file_to_patch}" 2> /dev/null
+        echo "Successfully patched gpio reference $(basename ${file_to_patch})!"
+      fi
+      if grep --binary-files=without-match 'swconfig dev switch0 port 2 set max_aneg_speed' "${file_to_patch}" 2> /dev/null
+      then
+        sed -i 's/swconfig dev switch0 port 2 set max_aneg_speed/ethtool -s eth0 speed/g' "${file_to_patch}" 2> /dev/null
+        echo "Successfully patched swconfig to ethtool $(basename ${file_to_patch})!"
+      fi
+      if grep --binary-files=without-match 'ssdk_set_set_advertise 4' "${file_to_patch}" 2> /dev/null
+      then
+        sed -i 's/ssdk_set_set_advertise 4/ethtool -s ghn speed/g' "${file_to_patch}" 2> /dev/null
+        echo "Successfully patched ssdk_set_set_advertise to ethtool $(basename ${file_to_patch})!"
+      fi
+      if grep --binary-files=without-match '/lib/delos-functions.sh' "${file_to_patch}" 2> /dev/null
+      then
+        sed -i 's|/lib/delos-functions.sh|/lib/delos/functions.sh|g' "${file_to_patch}" 2> /dev/null
+        echo "Successfully patched /lib/delos-functions.sh to /lib/delos/functions.sh $(basename ${file_to_patch})!"
+      fi
+    ;;
+  esac
 
-  if grep --binary-files=without-match 'dlan-pro-1200-ac' "${file_to_patch}" 2> /dev/null
-  then
-    sed -i 's/dlan-pro-1200-ac/devolo,magic-2-wifi/g' "${file_to_patch}"
-    echo "Successfully patched model reference $(basename ${file_to_patch})!"
-  fi
-  if grep --binary-files=without-match 'dlan-pro-1200*' "${file_to_patch}" 2> /dev/null
-  then
-    sed -i 's/dlan-pro-1200*/devolo,magic-2-wifi/g' "${file_to_patch}"
-    echo "Successfully patched model reference $(basename ${file_to_patch})!"
-  fi
-  if grep --binary-files=without-match 'dlan2-2400-ac' "${file_to_patch}" 2> /dev/null
-  then
-    sed -i 's/dlan2-2400-ac/devolo,magic-2-wifi-next/g' "${file_to_patch}"
-    echo "Successfully patched model reference $(basename ${file_to_patch})!"
-  fi
-  if grep --binary-files=without-match '/sys/class/gpio/gpio13' "${file_to_patch}" 2> /dev/null
-  then
-    sed -i 's|/sys/class/gpio/gpio13|/sys/class/gpio/gpio525|g' "${file_to_patch}" 2> /dev/null
-    echo "Successfully patched gpio reference $(basename ${file_to_patch})!"
-  fi
-  if grep --binary-files=without-match '/sys/class/gpio/gpio63' "${file_to_patch}" 2> /dev/null
-  then
-    sed -i 's|/sys/class/gpio/gpio63|/sys/class/gpio/plc-enable|g' "${file_to_patch}" 2> /dev/null
-    echo "Successfully patched gpio reference $(basename ${file_to_patch})!"
-  fi
-  if grep --binary-files=without-match 'swconfig dev switch0 port 2 set max_aneg_speed' "${file_to_patch}" 2> /dev/null
-  then
-    sed -i 's/swconfig dev switch0 port 2 set max_aneg_speed/ethtool -s eth0 speed/g' "${file_to_patch}" 2> /dev/null
-    echo "Successfully patched swconfig to ethtool $(basename ${file_to_patch})!"
-  fi
-  if grep --binary-files=without-match 'ssdk_set_set_advertise 4' "${file_to_patch}" 2> /dev/null
-  then
-    sed -i 's/ssdk_set_set_advertise 4/ethtool -s ghn speed/g' "${file_to_patch}" 2> /dev/null
-    echo "Successfully patched ssdk_set_set_advertise to ethtool $(basename ${file_to_patch})!"
-  fi
-  if grep --binary-files=without-match '/lib/delos-functions.sh' "${file_to_patch}" 2> /dev/null
-  then
-    sed -i 's|/lib/delos-functions.sh|/lib/delos/functions.sh|g' "${file_to_patch}" 2> /dev/null
-    echo "Successfully patched /lib/delos-functions.sh to /lib/delos/functions.sh $(basename ${file_to_patch})!"
-  fi
 }
 
 build_package_for_opkg_data()
@@ -223,22 +242,31 @@ build_package_for_opkg_data()
   input_file="$(realpath "${1}")"
   root_dir=$(dirname ${input_file})/../../../..
 
+  library_sidebyside="${3}"
+
   package_name=$(basename ${input_file})
-  config_result=$(grep "CONFIG_PACKAGE_${package_name}" ${script_dir}/../.config)
-  if [ $? -eq 0 ]
+  if [ -z ${library_sidebyside} ]
   then
-    case "${config_result}" in
-      *"is not set"*)
-        echo "Please use the OpenWRT package"
-        echo "Enable ${package_name} in 'make menuconfig'"
-      ;;
-    esac
-    return 0
+    config_result=$(grep "CONFIG_PACKAGE_${package_name}" ${script_dir}/../.config)
+    if [ $? -eq 0 ]
+    then
+      case "${config_result}" in
+        *"is not set"*)
+          echo "Please use the OpenWRT package"
+          echo "Enable ${package_name} in 'make menuconfig'"
+        ;;
+      esac
+      return 0
+    fi
   fi
   mkdir -p ${tmp_package}/CONTROL
   cp ${input_file}.control ${tmp_package}/CONTROL/control
   sed -i 's/Architecture: ipq/Architecture: arm_cortex-a7_neon-vfpv4/' ${tmp_package}/CONTROL/control
   sed -i 's/Architecture: ar71xx/Architecture: mips_24kc/' ${tmp_package}/CONTROL/control
+  if [ ! -z ${library_sidebyside} ]
+  then
+    sed -i "s/Package: /Package: ${library_sidebyside}-/" ${tmp_package}/CONTROL/control
+  fi
   if [ -e ${input_file}.conffiles ]
   then
     cp ${input_file}.conffiles ${tmp_package}/CONTROL/conffiles
@@ -247,12 +275,31 @@ build_package_for_opkg_data()
   pushd ${root_dir}
   while read line
   do
-    cp -a --parents .${line} ${tmp_package}/
-    patch_file ${tmp_package}/.${line}
+    if [ -z ${library_sidebyside} ]
+    then
+      cp -a --parents .${line} ${tmp_package}/
+      patch_file ${tmp_package}/.${line}
+    else
+      if [[ "${line}" =~ ^/lib/.* ]]
+      then
+        mkdir -p "${tmp_package}/lib-${library_sidebyside}"
+        cp -a .${line} "${tmp_package}/lib-${library_sidebyside}"/
+      else
+        cp -a --parents .${line} ${tmp_package}/
+      fi
+    fi
   done < ${input_file}.list
   popd
 
-  ${script_dir}/ipkg-build ${tmp_package} ${dest_dir}
+  if [ -z ${library_sidebyside} ]
+  then
+    ${script_dir}/ipkg-build ${tmp_package} ${dest_dir}
+  else
+    if [ -d "${tmp_package}/lib-${library_sidebyside}" ]
+    then
+      ${script_dir}/ipkg-build ${tmp_package} ${dest_dir}
+    fi
+  fi
   if [ $? -ne 0 ]
   then
     exit 1
@@ -268,6 +315,13 @@ root_dir=$(realpath ${tmp_dir}/*/squashfs-root)
 for package in ${root_dir}/usr/lib/opkg/info/{delos-base-files,delos-device-name,devolo-shared-configlayer,dlan2-fw-flashless-*,dlan2-tools,ghn-flashless,ghn-host,libssp,posix-timezone-db}.list
 do
   build_package_for_opkg_data ${package::-5} "${dest_dir}"
+done
+
+for library in ${!uClibc_files[@]}
+do
+  echo "Locating package for ${library}"
+  package=$(grep -l ${library} ${root_dir}/usr/lib/opkg/info/*.list)
+  build_package_for_opkg_data ${package::-5} "${dest_dir}" uClibc
 done
 
 rm -rf "${tmp_dir}"
