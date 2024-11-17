@@ -140,10 +140,10 @@ patch_file()
         uClibc_files[${library}]=
       done
 
-      mv "${file_to_patch}" "${file_to_patch}.real"
+      mv "${file_to_patch}" "${file_to_patch}.uClibc"
       echo "#!/bin/sh" > "${file_to_patch}"
-      echo "export LD_LIBRARY_PATH=/lib-uClibc" >> "${file_to_patch}"
-      echo "/lib-uClibc/ld-uClibc.so.0 $(basename ${file_to_patch}).real \"\$@\"" >> "${file_to_patch}"
+      echo "export LD_LIBRARY_PATH=/lib-uClibc:/usr/lib-uClibc" >> "${file_to_patch}"
+      echo "$(basename ${file_to_patch}).uClibc \"\$@\"" >> "${file_to_patch}"
       chmod +x "${file_to_patch}"
     ;;
     */lib/ld-musl-arm.so.1*)
@@ -280,12 +280,23 @@ build_package_for_opkg_data()
       cp -a --parents .${line} ${tmp_package}/
       patch_file ${tmp_package}/.${line}
     else
-      if [[ "${line}" =~ ^/lib/.* ]]
+      if [[ "${line}" =~ ^/lib/ld-uClibc.* ]]
       then
-        mkdir -p "${tmp_package}/lib-${library_sidebyside}"
-        cp -a .${line} "${tmp_package}/lib-${library_sidebyside}"/
-      else
         cp -a --parents .${line} ${tmp_package}/
+      else
+        if [[ "${line}" =~ ^/lib/.* ]]
+        then
+          mkdir -p "${tmp_package}/lib-${library_sidebyside}"
+          cp -a .${line} "${tmp_package}/lib-${library_sidebyside}"/
+        else
+          if [[ "${line}" =~ ^/usr/lib/.* ]]
+          then
+            mkdir -p "${tmp_package}/usr/lib-${library_sidebyside}"
+            cp -a .${line} "${tmp_package}/usr/lib-${library_sidebyside}"/
+          else
+            cp -a --parents .${line} ${tmp_package}/
+          fi
+        fi
       fi
     fi
   done < ${input_file}.list
@@ -295,7 +306,7 @@ build_package_for_opkg_data()
   then
     ${script_dir}/ipkg-build ${tmp_package} ${dest_dir}
   else
-    if [ -d "${tmp_package}/lib-${library_sidebyside}" ]
+    if [ -d "${tmp_package}/lib-${library_sidebyside}" -o -d "${tmp_package}/usr/lib-${library_sidebyside}" ]
     then
       ${script_dir}/ipkg-build ${tmp_package} ${dest_dir}
     fi
@@ -317,15 +328,30 @@ do
   build_package_for_opkg_data ${package::-5} "${dest_dir}"
 done
 
+for library in ${!uClibc_files[@]}
+do
+  echo "Looking for dependencies for ${library}"
+  full_library_path=$(find "${root_dir}" -name "${library}" -print -quit)
+  for dependency_library in $(readelf -d "${full_library_path}" | grep -Eo '[A-Za-z\.0-9_-]+\.so+[A-Za-z\.0-9_-]*')
+  do
+    echo "Adding to satisfy dependencies ${dependency_library}"
+    uClibc_files[${dependency_library}]=
+  done
+done
+
 declare -a built_packages
 for library in ${!uClibc_files[@]}
 do
   echo "Locating package for ${library}"
   package=$(grep -l ${library} ${root_dir}/usr/lib/opkg/info/*.list)
+  echo "Package found: ${package}"
   if [[ ! ${built_packages[@]} =~ ${package} ]]
   then
+    echo "Building uClibc package: $(basename ${package::-5})"
     build_package_for_opkg_data ${package::-5} "${dest_dir}" uClibc
     built_packages+=(${package})
+  else
+    echo "uClibc package already built: $(basename ${package::-5})"
   fi
 done
 
