@@ -317,11 +317,16 @@ do
   build_package_for_opkg_data ${package::-5} "${dest_dir}"
 done
 
+declare -a built_packages
 for library in ${!uClibc_files[@]}
 do
   echo "Locating package for ${library}"
   package=$(grep -l ${library} ${root_dir}/usr/lib/opkg/info/*.list)
-  build_package_for_opkg_data ${package::-5} "${dest_dir}" uClibc
+  if [[ ! ${built_packages[@]} =~ ${package} ]]
+  then
+    build_package_for_opkg_data ${package::-5} "${dest_dir}" uClibc
+    built_packages+=(${package})
+  fi
 done
 
 rm -rf "${tmp_dir}"
