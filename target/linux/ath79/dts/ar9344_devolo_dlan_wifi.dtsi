@@ -187,7 +187,57 @@
 			0x04 0x06400000
 			0x08 0x00000000 /* PORT5 PAD MODE CTRL */
 			0x0c 0x00000000 /* PORT6 PAD MODE CTRL */
+			0xe4 0x0002a545 /* MAC_POWER_SEL */
 			0x7c 0x0000007e /* PORT0_STATUS */
+		>;
+		qca,ar8327-aclrules = <
+			/* [rule_type] mac
+			   [mac_src_addr] 00-b0-52-00-00-01 [mac_src_addr_mask] ff-ff-ff-ff-ff-ff
+			   [mac_eth_type] 0x88e1 [mac_eth_type_mask] 0xffff
+			   [deny] yes
+			   ports: 3,4 */
+			0 0 0 0x00010000 0x00b05200 0x88e10000 0x18
+			0 1 0 0xffff0000 0xffffffff 0xffff0000 0xc9
+			0 2 0 0          0x000001c0 0          0
+			/* [rule_type] mac
+			   [mac_src_addr] 00-b0-52-00-00-01 [mac_src_addr_mask] ff-ff-ff-ff-ff-ff
+			   [mac_eth_type] 0x88e1 [mac_eth_type_mask] 0xffff
+			   [rdt_to_port] yes [dest_port] 0
+			   ports: 2 */
+			1 0 0 0x00010000 0x00b05200 0x88e10000 0x04
+			1 1 0 0xffff0000 0xffffffff 0xffff0000 0xc9
+			1 2 0 0x20000000 0x00000010 0          0
+			/* [rule_type] ip4
+			   [ip4_dst_addr] 239.255.255.0 [ip4_dst_addr_mask] 255.255.255.0
+			   [sport_mask] 0 [dport_mask] 0     // ip port mask
+			   [src_port] 0x7f [dest_port] 0x7f  // switch port bitmap
+			*/
+			2 0 0xefffff00 0          0          0          0x7f
+			2 1 0xffffff00 0          0          0x00030000 0xc2
+			2 2 0          0xe0000000 0x0000001f 0          0
+			/* deny all MAC destination 00:13:9d:00:05:00 (G.hn ETHBOOT)
+			   on all ports but 0 where the CPU is
+			*/
+			3 0 0x9d000500 0x13       0          0          0x7e
+			3 1 0xffffffff 0x0000ffff 0          0          0xc9
+			3 2 0          0          0x1c0      0          0
+			/* deny all MAC source 00:13:9d:00:05:00 (G.hn ETHBOOT)
+			   on all ports but 2 where the G.hn chip is connected
+			*/
+			4 0 0 0x05000000 0x00139d00 0 0x7b
+			4 1 0 0xffff0000 0xffffffff 0 0xc9
+			4 2 0 0          0x1c0      0 0
+			/* redirect all MAC source 00:13:9d:00:05:00 (G.hn ETHBOOT)
+			   on all ports but 2 where the G.hn chip is connected
+			*/
+			4 0 0 0x05000000 0x00139d00 0 0x7b
+			4 1 0 0xffff0000 0xffffffff 0 0xc9
+			4 2 0 0          0x1c0      0 0
+			/* redirect all MAC source 00:13:9d:00:05:00 (G.hn ETHBOOT)
+			   on the G.hn port 2 to the CPU, skip all other ports */
+			5 0 0 0x05000000 0x00139d00 0 0x04
+			5 1 0 0xffff0000 0xffffffff 0 0xc9
+			5 2 0 0          0xc0       0 0
 		>;
 	};
 };

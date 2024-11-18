@@ -27,6 +27,7 @@
 #include <linux/of_device.h>
 #include <linux/leds.h>
 #include <linux/mdio.h>
+#include <linux/reboot.h>
 
 #include "ar8216.h"
 #include "ar8327.h"
@@ -531,6 +532,40 @@ ar8327_leds_cleanup(struct ar8xxx_priv *priv)
 	kfree(data->leds);
 }
 
+static void
+ar8327_wait_acl_ready(struct ar8xxx_priv *priv)
+{
+	int timeout = 20;
+
+	while (ar8xxx_read(priv, AR8327_REG_ACL_FUNC(0)) & AR8327_ACL_FUNC_ACL_BUSY && --timeout)
+		udelay(10);
+
+	if (!timeout)
+		pr_err("ar8327: timeout waiting for acl to become ready\n");
+}
+
+static void ar8327_acl_cleanup(struct ar8xxx_priv *priv)
+{
+	unsigned i;
+
+	pr_info("ar8327: flush acl\n");
+	ar8xxx_write(priv, AR8327_REG_ACL_FUNC(1), 0);
+	ar8xxx_write(priv, AR8327_REG_ACL_FUNC(2), 0);
+	ar8xxx_write(priv, AR8327_REG_ACL_FUNC(3), 0);
+	ar8xxx_write(priv, AR8327_REG_ACL_FUNC(4), 0);
+	ar8xxx_write(priv, AR8327_REG_ACL_FUNC(5), 0);
+	for (i = 0; i < 96; i++) {
+		u32 t;
+		t = AR8327_ACL_FUNC_ACL_BUSY;
+		t |= i << AR8327_ACL_FUNC_ACL_FUNC_INDEX_S;
+		ar8xxx_write(priv, AR8327_REG_ACL_FUNC(0), t | (AR8327_ACL_RULE_SEL_PATTERN << AR8327_ACL_FUNC_ACL_RULE_SEL_S));
+		ar8xxx_write(priv, AR8327_REG_ACL_FUNC(0), t | (AR8327_ACL_RULE_SEL_MASK << AR8327_ACL_FUNC_ACL_RULE_SEL_S));
+		ar8xxx_write(priv, AR8327_REG_ACL_FUNC(0), t | (AR8327_ACL_RULE_SEL_ACTION << AR8327_ACL_FUNC_ACL_RULE_SEL_S));
+		ar8327_wait_acl_ready(priv);
+	}
+	ar8xxx_reg_clear(priv, AR8327_REG_MODULE_EN, AR8327_MODULE_EN_ACL);
+}
+
 static int
 ar8327_hw_config_pdata(struct ar8xxx_priv *priv,
 		       struct ar8327_platform_data *pdata)
@@ -649,6 +684,51 @@ ar8327_hw_config_of(struct ar8xxx_priv *priv, struct device_node *np)
 		}
 	}
 
+	paddr = of_get_property(np, "qca,ar8327-aclrules", &len);
+	if (paddr) {
+		static int sw_init_cnt = 0;
+		sw_init_cnt++;
+		len /= sizeof(*paddr);
+		pr_info("ar8327: addr: %08x  len: %d (%d lines) (retry %d)\n", (unsigned int)paddr, len, len / 7, sw_init_cnt);
+		if (sw_init_cnt > 10) {
+			// maximum 10 attempts to initialize switch
+			pr_emerg("ar8327: Cannot initialize switch\n");
+			dump_stack();
+			emergency_restart();
+		}
+		if (len < 7)
+			return -EINVAL;
+		if (len % 7)
+			return -EINVAL;
+
+		for (i = 0; i < len - 1; i += 7) {
+			u32 index, sel, func1, func2, func3, func4, func5;
+			u32 t;
+
+			ar8xxx_reg_set(priv, AR8327_REG_MODULE_EN, AR8327_MODULE_EN_ACL);
+			index = be32_to_cpup(paddr + i);
+			sel   = be32_to_cpup(paddr + i + 1);
+			func1 = be32_to_cpup(paddr + i + 2);
+			func2 = be32_to_cpup(paddr + i + 3);
+			func3 = be32_to_cpup(paddr + i + 4);
+			func4 = be32_to_cpup(paddr + i + 5);
+			func5 = be32_to_cpup(paddr + i + 6);
+
+			t = AR8327_ACL_FUNC_ACL_BUSY;
+			t |= sel << AR8327_ACL_FUNC_ACL_RULE_SEL_S;
+			t |= index << AR8327_ACL_FUNC_ACL_FUNC_INDEX_S;
+			pr_info("ar8327: add acl %d:%08x,%08x,%08x,%08x,%08x,%08x\n",
+				index, t, func1, func2, func3, func4, func5);
+			ar8xxx_write(priv, AR8327_REG_ACL_FUNC(1), func1);
+			ar8xxx_write(priv, AR8327_REG_ACL_FUNC(2), func2);
+			ar8xxx_write(priv, AR8327_REG_ACL_FUNC(3), func3);
+			ar8xxx_write(priv, AR8327_REG_ACL_FUNC(4), func4);
+			ar8xxx_write(priv, AR8327_REG_ACL_FUNC(5), func5);
+			ar8xxx_write(priv, AR8327_REG_ACL_FUNC(0), t);
+			ar8327_wait_acl_ready(priv);
+		}
+	}
+
 	leds = of_get_child_by_name(np, "leds");
 	if (!leds)
 		return 0;
@@ -721,6 +801,8 @@ static void
 ar8327_cleanup(struct ar8xxx_priv *priv)
 {
 	ar8327_leds_cleanup(priv);
+
+	ar8327_acl_cleanup(priv);
 }
 
 static void
@@ -732,6 +814,7 @@ ar8327_init_globals(struct ar8xxx_priv *priv)
 
 	/* enable CPU port and disable mirror port */
 	t = AR8327_FWD_CTRL0_CPU_PORT_EN |
+	    AR8327_FWD_CTRL0_IGMP_COPY_EN |
 	    AR8327_FWD_CTRL0_MIRROR_PORT;
 	ar8xxx_write(priv, AR8327_REG_FWD_CTRL0, t);
 
@@ -741,9 +824,13 @@ ar8327_init_globals(struct ar8xxx_priv *priv)
 	    (AR8327_PORTS_ALL << AR8327_FWD_CTRL1_BC_FLOOD_S);
 	ar8xxx_write(priv, AR8327_REG_FWD_CTRL1, t);
 
-	/* enable jumbo frames */
+	/* setup MTU */
 	ar8xxx_rmw(priv, AR8327_REG_MAX_FRAME_SIZE,
-		   AR8327_MAX_FRAME_SIZE_MTU, 9018 + 8 + 2);
+		   AR8327_MAX_FRAME_SIZE_MTU, 1518 + 8 + 2);
+
+	/* enable jumbo frames */
+//	ar8xxx_rmw(priv, AR8327_REG_MAX_FRAME_SIZE,
+//		   AR8327_MAX_FRAME_SIZE_MTU, 9018 + 8 + 2);
 
 	/* Enable MIB counters */
 	ar8xxx_reg_set(priv, AR8327_REG_MODULE_EN,
@@ -752,6 +839,44 @@ ar8327_init_globals(struct ar8xxx_priv *priv)
 	/* Disable EEE on all phy's due to stability issues */
 	for (i = 0; i < AR8XXX_NUM_PHYS; i++)
 		data->eee[i] = false;
+
+	/* Updating HOL registers and RGMII delay settings
+	 * with the values suggested by QCA switch team
+	 */
+
+	if (chip_is_ar8337(priv)) {
+		/* This breaks dLAN 1200+ WiFi ac ethernet switch to CPU connection (RGMII int
+erface).
+		 * The RGMII timing dependent on the hardware (board) and is set in the dts fi
+le.
+		ar8xxx_write(priv, AR8327_REG_PAD5_MODE,
+			AR8327_PAD_RGMII_RXCLK_DELAY_EN);
+		*/
+
+		ar8xxx_write(priv, 0x970, 0x1e864443);
+		ar8xxx_write(priv, 0x974, 0x000001c6);
+		ar8xxx_write(priv, 0x978, 0x19008643);
+		ar8xxx_write(priv, 0x97c, 0x000001c6);
+		ar8xxx_write(priv, 0x980, 0x19008643);
+		ar8xxx_write(priv, 0x984, 0x000001c6);
+		ar8xxx_write(priv, 0x988, 0x19008643);
+		ar8xxx_write(priv, 0x98c, 0x000001c6);
+		ar8xxx_write(priv, 0x990, 0x19008643);
+		ar8xxx_write(priv, 0x994, 0x000001c6);
+		ar8xxx_write(priv, 0x998, 0x1e864443);
+		ar8xxx_write(priv, 0x99c, 0x000001c6);
+		ar8xxx_write(priv, 0x9a0, 0x1e864443);
+		ar8xxx_write(priv, 0x9a4, 0x000001c6);
+	}
+
+	if (chip_is_ar8327(priv))
+		ar8xxx_write(priv, AR8327_REG_GLOBAL_FC_THRESH,
+				AR8327_GLOBAL_FC_THRESH_DFLT_VAL);
+
+	/* Disable NAT/NAPT */
+	t = ar8xxx_read(priv, AR8327_REG_NAT_CTRL);
+	t &= ~(AR8327_HNAPT_EN | AR8327_HNAT_EN);
+	ar8xxx_write(priv, AR8327_REG_NAT_CTRL, t);
 }
 
 static void
@@ -764,8 +889,14 @@ ar8327_init_port(struct ar8xxx_priv *priv, int port)
 		t = data->port0_status;
 	else if (port == 6)
 		t = data->port6_status;
-	else
-		t = AR8216_PORT_STATUS_LINK_AUTO;
+	else {
+		t = ar8xxx_read(priv, AR8327_REG_PORT_STATUS(port));
+		t &= (~(AR8216_PORT_STATUS_LINK_AUTO |
+			AR8327_PORT_STATUS_DUPLEX |
+			AR8327_PORT_STATUS_SPEED));
+		t |= (AR8327_PORT_STATUS_DUPLEX | AR8327_SPEED_1000M);
+		t |= AR8216_PORT_STATUS_LINK_AUTO;
+	}
 
 	if (port != AR8216_PORT_CPU && port != 6) {
 		/*hw limitation:if configure mac when there is traffic,
@@ -773,13 +904,20 @@ ar8327_init_port(struct ar8xxx_priv *priv, int port)
 		ar8xxx_write(priv, AR8327_REG_PORT_STATUS(port), 0);
 		msleep(100);
 		t |= AR8216_PORT_STATUS_FLOW_CONTROL;
-		ar8xxx_write(priv, AR8327_REG_PORT_STATUS(port), t);
+		ar8xxx_write(priv, AR8327_REG_PORT_STATUS(port), t
+		  & (~(AR8216_PORT_STATUS_TXMAC | AR8216_PORT_STATUS_RXMAC)));
 	} else {
-		ar8xxx_write(priv, AR8327_REG_PORT_STATUS(port), t);
+		ar8xxx_write(priv, AR8327_REG_PORT_STATUS(port), t
+		  & (~(AR8216_PORT_STATUS_TXMAC | AR8216_PORT_STATUS_RXMAC)));
 	}
+
+	udelay(800);
+	ar8xxx_write(priv, AR8327_REG_PORT_STATUS(port), t);
 
 	ar8xxx_write(priv, AR8327_REG_PORT_HEADER(port), 0);
 
+	t = 1 << AR8327_PORT_VLAN0_DEF_SVID_S;
+	t |= 1 << AR8327_PORT_VLAN0_DEF_CVID_S;
 	ar8xxx_write(priv, AR8327_REG_PORT_VLAN0(port), 0);
 
 	t = AR8327_PORT_VLAN1_OUT_MODE_UNTOUCH << AR8327_PORT_VLAN1_OUT_MODE_S;
@@ -1116,6 +1254,90 @@ ar8327_sw_get_eee(struct switch_dev *dev,
 
 	val->value.i = data->eee[phy];
 
+	return 0;
+}
+
+
+static int
+ar8327_sw_set_phy_speed(struct switch_dev *dev,
+		  const struct switch_attr *attr,
+		  struct switch_val *val)
+{
+	struct ar8xxx_priv *priv = swdev_to_ar8xxx(dev);
+	struct mii_bus *bus = priv->mii_bus;
+	int port = val->port_vlan;
+	int speed = val->value.i;
+	u32 aneg1, aneg2;
+
+	if (port >= dev->ports)
+		return -EINVAL;
+	if (port == 0 || port == 6)
+		return -EOPNOTSUPP;
+
+	aneg1 = mdiobus_read(bus, port - 1, MII_ADVERTISE) && ~ADVERTISE_ALL;
+	switch (speed)
+	{
+		case 10: // 10 Base-T
+			aneg1 |= ADVERTISE_10HALF | ADVERTISE_10FULL;
+			aneg2 = 0x0000;
+			break;
+
+		case 100: // 100 Base-Tx
+			aneg1 |= ADVERTISE_ALL;
+			aneg2 = 0x0000;
+			break;
+
+		case 1000: // 1000 Base-T
+			aneg1 |= ADVERTISE_ALL;
+			aneg2 = ADVERTISE_1000FULL;
+			break;
+
+		default:
+			printk(KERN_ERR "ar8327_sw_set_phy_speed: unknown speed %d\n", speed);
+			return -EINVAL;
+	}
+	mdiobus_write(bus, port - 1, MII_ADVERTISE, aneg1);
+	mdiobus_write(bus, port - 1, MII_CTRL1000, aneg2);
+	mdiobus_write(bus, port - 1, MII_BMCR, BMCR_ANENABLE | BMCR_ANRESTART);
+	return 0;
+}
+
+static int
+ar8327_sw_get_phy_speed(struct switch_dev *dev,
+		  const struct switch_attr *attr,
+		  struct switch_val *val)
+{
+	struct ar8xxx_priv *priv = swdev_to_ar8xxx(dev);
+	struct mii_bus *bus = priv->mii_bus;
+	int port = val->port_vlan;
+	u32 aneg1, aneg2;
+
+	if (port >= dev->ports)
+		return -EINVAL;
+	if (port == 0 || port == 6)
+		return -EOPNOTSUPP;
+
+	aneg2 = mdiobus_read(bus, port - 1, MII_CTRL1000);
+	if (aneg2 & ADVERTISE_1000FULL)
+	{
+		val->value.i = 1000; // 1000 Base-T
+	}
+	else
+	{
+		aneg1 = mdiobus_read(bus, port - 1, MII_ADVERTISE);
+		if (aneg1 & (ADVERTISE_100HALF | ADVERTISE_100FULL))
+		{
+			val->value.i = 100; // 100 Base-Tx
+		}
+		else if (aneg1 & (ADVERTISE_10HALF | ADVERTISE_10FULL))
+		{
+			val->value.i = 10; // 10 Base-T
+		}
+		else
+		{
+			val->value.i = 0;
+		}
+	}
 	return 0;
 }
 
@@ -1487,6 +1709,14 @@ static const struct switch_attr ar8327_sw_attr_port[] = {
 		.set = ar8327_sw_set_port_vlan_prio,
 		.get = ar8327_sw_get_port_vlan_prio,
 		.max = 7,
+	},
+	{
+		.type = SWITCH_TYPE_INT,
+		.name = "max_aneg_speed",
+		.description = "get/set advertise max phy speed",
+		.set = ar8327_sw_set_phy_speed,
+		.get = ar8327_sw_get_phy_speed,
+		.max = 1000,
 	},
 };
 
