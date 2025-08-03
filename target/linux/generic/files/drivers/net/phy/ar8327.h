@@ -1,7 +1,8 @@
 /*
  * ar8327.h: AR8216 switch driver
  *
- * Copyright (C) 2009 Felix Fietkau <nbd@nbd.name>
+ * Copyright (c) 2017 The Linux Foundation. All rights reserved.
+ * Copyright (C) 2009 Felix Fietkau <nbd@openwrt.org>
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -16,6 +17,23 @@
 
 #ifndef __AR8327_H
 #define __AR8327_H
+
+#include <linux/workqueue.h>
+#include <linux/leds.h>
+#include <linux/ar8216_platform.h>
+#include "ar8216.h"
+
+enum {
+	AR8327_SPEED_10M = 0,
+	AR8327_SPEED_100M = 1,
+	AR8327_SPEED_1000M = 2,
+	AR8327_SPEED_NONE = 3,
+};
+
+enum {
+	AR8327_DUPLEX_HALF = 0,
+	AR8327_DUPLEX_FULL = 1,
+};
 
 #define AR8327_NUM_PORTS	7
 #define AR8327_NUM_LEDS		15
@@ -53,10 +71,10 @@
 #define   AR8327_PAD_RGMII_TXCLK_DELAY_EN	BIT(25)
 #define   AR8327_PAD_RGMII_EN			BIT(26)
 
-#define AR8327_REG_POWER_ON_STRAP		0x010
-#define   AR8327_POWER_ON_STRAP_POWER_ON_SEL	BIT(31)
-#define   AR8327_POWER_ON_STRAP_LED_OPEN_EN	BIT(24)
-#define   AR8327_POWER_ON_STRAP_SERDES_AEN	BIT(7)
+#define AR8327_REG_POWER_ON_STRIP		0x010
+#define   AR8327_POWER_ON_STRIP_POWER_ON_SEL	BIT(31)
+#define   AR8327_POWER_ON_STRIP_LED_OPEN_EN	BIT(24)
+#define   AR8327_POWER_ON_STRIP_SERDES_AEN	BIT(7)
 
 #define AR8327_REG_INT_STATUS0			0x020
 #define   AR8327_INT0_VT_DONE			BIT(20)
@@ -67,6 +85,10 @@
 
 #define AR8327_REG_MODULE_EN			0x030
 #define   AR8327_MODULE_EN_MIB			BIT(0)
+#define   AR8327_MODULE_EN_ACL			BIT(1)
+#define   AR8327_MODULE_EN_QM_ERR		BIT(8)
+#define   AR8327_MODULE_EN_LOOKUP_ERR		BIT(9)
+
 
 #define AR8327_REG_MIB_FUNC			0x034
 #define   AR8327_MIB_CPU_KEEP			BIT(20)
@@ -84,6 +106,14 @@
 #define   AR8327_MAX_FRAME_SIZE_MTU		BITS(0, 14)
 
 #define AR8327_REG_PORT_STATUS(_i)		(0x07c + (_i) * 4)
+#define   AR8327_PORT_STATUS_SPEED	    BITS(0, 2)
+#define   AR8327_PORT_STATUS_TXMAC	    BIT(2)
+#define   AR8327_PORT_STATUS_RXMAC	    BIT(3)
+#define   AR8327_PORT_STATUS_TXFLOW	    BIT(4)
+#define   AR8327_PORT_STATUS_RXFLOW	    BIT(5)
+#define   AR8327_PORT_STATUS_DUPLEX	    BIT(6)
+#define   AR8327_PORT_STATUS_LINK_UP	BIT(8)
+#define   AR8327_PORT_STATUS_LINK_AUTO	BIT(9)
 #define   AR8327_PORT_STATUS_TXFLOW_AUTO	BIT(10)
 #define   AR8327_PORT_STATUS_RXFLOW_AUTO	BIT(11)
 
@@ -163,19 +193,20 @@
 #define   AR8327_FRAME_ACK_CTRL_ARP_REQ		BIT(6)
 #define   AR8327_FRAME_ACK_CTRL_S(_i)		(((_i) % 4) * 8)
 
+#define AR8327_REG_ACL_FUNC(_i)			(0x400 + (_i) * 0x4)
+#define   AR8327_ACL_FUNC_ACL_BUSY		BIT(31)
+#define   AR8327_ACL_FUNC_ACL_RULE_SEL		BITS(8, 2)
+#define   AR8327_ACL_FUNC_ACL_RULE_SEL_S	8
+#define   AR8327_ACL_FUNC_ACL_FUNC_INDEX	BITS(0, 7)
+#define   AR8327_ACL_FUNC_ACL_FUNC_INDEX_S	0
+
 #define AR8327_REG_PORT_VLAN0(_i)		(0x420 + (_i) * 0x8)
-#define   AR8327_PORT_VLAN0_DEF_PRI_MASK	BITS(0, 3)
 #define   AR8327_PORT_VLAN0_DEF_SVID		BITS(0, 12)
 #define   AR8327_PORT_VLAN0_DEF_SVID_S		0
-#define   AR8327_PORT_VLAN0_DEF_SPRI		BITS(13, 3)
-#define   AR8327_PORT_VLAN0_DEF_SPRI_S		13
 #define   AR8327_PORT_VLAN0_DEF_CVID		BITS(16, 12)
 #define   AR8327_PORT_VLAN0_DEF_CVID_S		16
-#define   AR8327_PORT_VLAN0_DEF_CPRI		BITS(29, 3)
-#define   AR8327_PORT_VLAN0_DEF_CPRI_S		29
 
 #define AR8327_REG_PORT_VLAN1(_i)		(0x424 + (_i) * 0x8)
-#define   AR8327_PORT_VLAN1_VLAN_PRI_PROP	BIT(4)
 #define   AR8327_PORT_VLAN1_PORT_VLAN_PROP	BIT(6)
 #define   AR8327_PORT_VLAN1_OUT_MODE		BITS(12, 2)
 #define   AR8327_PORT_VLAN1_OUT_MODE_S		12
@@ -251,12 +282,11 @@
 #define   AR8327_VTU_FUNC1_VID_S		16
 #define   AR8327_VTU_FUNC1_BUSY			BIT(31)
 
-#define AR8327_REG_ARL_CTRL			0x0618
-
 #define AR8327_REG_FWD_CTRL0			0x620
 #define   AR8327_FWD_CTRL0_CPU_PORT_EN		BIT(10)
 #define   AR8327_FWD_CTRL0_MIRROR_PORT		BITS(4, 4)
 #define   AR8327_FWD_CTRL0_MIRROR_PORT_S	4
+#define   AR8327_FWD_CTRL0_IGMP_COPY_EN		BIT(3)
 
 #define AR8327_REG_FWD_CTRL1			0x624
 #define   AR8327_FWD_CTRL1_UC_FLOOD		BITS(0, 7)
@@ -279,17 +309,44 @@
 
 #define AR8327_REG_PORT_PRIO(_i)		(0x664 + (_i) * 0xc)
 
+#define AR8327_REG_GLOBAL_FC_THRESH		0x800
+#define AR8327_GLOBAL_FC_THRESH_DFLT_VAL	0x12001f0
+
 #define AR8327_REG_PORT_HOL_CTRL1(_i)		(0x974 + (_i) * 0x8)
 #define   AR8327_PORT_HOL_CTRL1_EG_MIRROR_EN	BIT(16)
 
 #define AR8337_PAD_MAC06_EXCHANGE_EN		BIT(31)
 
-#define AR8327_PHY_MODE_SEL			0x12
-#define   AR8327_PHY_MODE_SEL_RGMII		BIT(3)
-#define AR8327_PHY_TEST_CTRL			0x0
-#define   AR8327_PHY_TEST_CTRL_RGMII_RX_DELAY	BIT(15)
-#define AR8327_PHY_SYS_CTRL			0x5
-#define   AR8327_PHY_SYS_CTRL_RGMII_TX_DELAY	BIT(8)
+#define AR8327_REG_QM_DEBUG_ADDR		0x820
+#define AR8327_REG_QM_DEBUG_VALUE		0x824
+#define   AR8327_REG_QM_PORT0_3_QNUM		0x1d
+#define   AR8327_REG_QM_PORT4_6_QNUM		0x1e
+
+#define AR8327_REG_ROUTE_EG_MODE                0xc80
+#define   AR8327_ROUTE_EG_MODE_S(_i)            ((_i) * 4)
+
+#define AR8327_REG_NAT_CTRL	0xe38
+#define   AR8327_HNAPT_EN	BIT(0)
+#define   AR8327_HNAT_EN	BIT(1)
+
+#define AR8327_PHY_SPEC_STATUS 0x11
+#define   AR8327_PHY_SPEC_STATUS_LINK		BIT(10)
+#define   AR8327_PHY_SPEC_STATUS_DUPLEX		BIT(13)
+#define   AR8327_PHY_SPEC_STATUS_SPEED		BITS(14, 2)
+
+#define AR8327_PHY_DEBUG_GREEN   0x3d
+#define   AR8327_PHY_GATE_CLK_IN1000   BIT(6)
+
+#define AR8327_PHY_DEBUG_HIB_CTRL   0x0b
+#define   AR8327_PHY_HIB_CTRL_SEL_RST_80U	BIT(10)
+#define   AR8327_PHY_HIB_CTRL_EN_ANY_CHANGE	BIT(13)
+
+#define AR8327_PHY_DEBUG_0   0
+#define AR8327_PHY_MANU_CTRL_EN  BIT(12)
+
+#define AR8327_PHY_DEBUG_2   2
+
+#define ADVERTISE_MULTI_PORT_PREFER	0x0400
 
 enum ar8327_led_pattern {
 	AR8327_LED_PATTERN_OFF = 0,
@@ -330,5 +387,10 @@ struct ar8327_data {
 	/* all fields below are cleared on reset */
 	bool eee[AR8XXX_NUM_PHYS];
 };
+
+typedef int (*port_link_notify_func)(unsigned char port_id,
+				     unsigned char link,
+				     unsigned char speed, unsigned char duplex);
+void ar8327_port_link_notify_register(port_link_notify_func func);
 
 #endif

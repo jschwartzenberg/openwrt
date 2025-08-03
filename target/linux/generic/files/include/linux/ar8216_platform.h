@@ -115,6 +115,28 @@ struct ar8327_led_info {
 	.mode = AR8327_LED_MODE_ ## _mode 	\
 }
 
+enum ar8327_acl_rule_sel {
+	AR8327_ACL_RULE_SEL_PATTERN = 0,
+	AR8327_ACL_RULE_SEL_MASK,
+	AR8327_ACL_RULE_SEL_ACTION,
+};
+
+struct ar8327_acl_rule {
+	int index;
+	enum ar8327_acl_rule_sel sel;
+	u32 func1, func2, func3, func4, func5;
+};
+
+#define AR8327_ACL_RULE(_index, _sel, _func1, _func2, _func3, _func4, _func5) {	\
+	.index = (_index),			\
+	.sel = (AR8327_ACL_RULE_SEL_ ## _sel),	\
+	.func1 = (_func1),			\
+	.func2 = (_func2),			\
+	.func3 = (_func3),			\
+	.func4 = (_func4),			\
+	.func5 = (_func5),			\
+}
+
 struct ar8327_platform_data {
 	struct ar8327_pad_cfg *pad0_cfg;
 	struct ar8327_pad_cfg *pad5_cfg;
@@ -128,6 +150,9 @@ struct ar8327_platform_data {
 
 	unsigned num_leds;
 	const struct ar8327_led_info *leds;
+
+	unsigned num_acl;
+	const struct ar8327_acl_rule *acl;
 };
 
 #endif /* AR8216_PLATFORM_H */
