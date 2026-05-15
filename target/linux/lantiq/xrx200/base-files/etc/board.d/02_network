@@ -19,8 +19,6 @@ lantiq_setup_interfaces()
 	arcadyan,vgv7519-brn|\
 	arcadyan,vgv7519-nor|\
 	arcadyan,vrv9510kwac23|\
-	avm,fritz5490|\
-	avm,fritz5490-micron|\
 	bt,homehub-v5a|\
 	lantiq,easy80920-nand|\
 	lantiq,easy80920-nor|\
@@ -31,8 +29,6 @@ lantiq_setup_interfaces()
 	avm,fritz3370-rev2-hynix|\
 	avm,fritz3370-rev2-micron|\
 	avm,fritz3390|\
-	avm,fritz3490|\
-	avm,fritz3490-micron|\
 	avm,fritz7360sl|\
 	avm,fritz7360-v2|\
 	avm,fritz7362sl|\
@@ -46,6 +42,14 @@ lantiq_setup_interfaces()
 		;;
 	avm,fritz7412)
 		ucidef_set_interface_lan "lan"
+		;;
+	avm,fritz3490|\
+	avm,fritz3490-micron|\
+	avm,fritz5490|\
+	avm,fritz5490-micron|\
+	avm,fritz7490|\
+	avm,fritz7490-micron)
+                ucidef_set_interface_lan "lan1 lan2 lan3 lan4 lan-wasp"
 		;;
 	*)
 		ucidef_set_interface_lan 'eth0'
